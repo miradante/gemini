@@ -232,8 +232,9 @@
 
     <script>
         class Card {
-            constructor(name, type, cost, power, breaker = 1, effect = null) {
+            constructor(name, civilization, type, cost, power, breaker = 1, effect = null) {
                 this.name = name;
+                this.civilization = civilization; // light, water, darkness, fire, nature, multi, colorless
                 this.type = type; // creature, spell, crossgear, castle, gcastle, d2field, field, tamaseed, kingcell, psychic, gr
                 this.cost = cost;
                 this.power = power;
@@ -251,23 +252,23 @@
             turn: 1,
             currentTurnPlayer: null,
             winner: null,
-            sandboxMode: true, // Default ON
+            sandboxMode: true,
             sandboxTarget: null
         };
 
-        const defaultDeckStr = `// 枚数, カード名, 種類(クリーチャー/呪文/クロスギア/城/G城/D2フィールド/その他フィールド/タマシード/キングセル), コスト, パワー, ブレイカー数, 効果
-10, ブロンズ・ゴブリン, クリーチャー, 1, 1000, 1,
-10, シルバー・ナイト, クリーチャー, 3, 3000, 1,
-10, ゴールド・ドラゴン, クリーチャー, 5, 5000, 2,
-10, エナジー・ドロー, 呪文, 3, 0, 0, draw_2`;
+        const defaultDeckStr = `// 枚数, カード名, 文明(光/水/闇/火/自然/多色/無色), 種類(クリーチャー/呪文/クロスギア/城/G城/D2フィールド/その他フィールド/タマシード/キングセル), コスト, パワー, ブレイカー数, 効果
+10, ブロンズ・ゴブリン, 自然, クリーチャー, 1, 1000, 1, マナゾーンに置く時、このカードはタップして置く。
+10, シルバー・ナイト, 光, クリーチャー, 3, 3000, 1, バトル中、パワー+2000。
+10, ゴールド・ドラゴン, 火, クリーチャー, 5, 5000, 2, W・ブレイカー
+10, エナジー・ドロー, 水, 呪文, 3, 0, 0, draw_2`;
 
         const defaultSuperDimStr = `// 超次元ゾーン用カード
-2, 激竜王ガイアール・オウドラゴン, psychic, 24, 25000, 3,
-2, 時空の火焔ボルシャック・ドラゴン, psychic, 7, 6000, 2`;
+2, 激竜王ガイアール・オウドラゴン, 火, psychic, 24, 25000, 3, サイレント・スキル
+2, 時空の火焔ボルシャック・ドラゴン, 火, psychic, 7, 6000, 2, 覚醒`;
 
         const defaultSuperGRStr = `// 超GRゾーン用カード
-6, ヤッタレロボ, gr, 2, 2000, 1,
-6, 全能ゼンノー, gr, 4, 3000, 1`;
+6, ヤッタレロボ, 火, gr, 2, 2000, 1, G・ストライク
+6, 全能ゼンノー, 水, gr, 4, 3000, 1, 相手のクリーチャーは、バトルゾーンに出たターンに攻撃できない。`;
 
         let p1DeckStr = defaultDeckStr;
         let p2DeckStr = defaultDeckStr;
@@ -278,7 +279,7 @@
 
         let selectedAttackerIndex = null;
         let revealedShields = {};
-        let shieldCounters = {}; // Tracks next persistent shield ID per player
+        let shieldCounters = {};
 
         function createPlayer(id, deckStr, superDimStr, superGRStr) {
             shieldCounters[id] = 5;
@@ -288,11 +289,25 @@
                 superdim: createDeck(superDimStr),
                 supergr: createDeck(superGRStr),
                 hand: [],
-                shield: [], // Elements will carry { card, shieldId }
+                shield: [],
                 mana: [],
                 bz: [],
                 graveyard: []
             };
+        }
+
+        function parseCivilization(civStr) {
+            const raw = civStr.trim().toLowerCase();
+            const map = {
+                '光': 'light', 'light': 'light', '白': 'light',
+                '水': 'water', 'water': 'water', '青': 'water',
+                '闇': 'darkness', 'darkness': 'darkness', '黒': 'darkness',
+                '火': 'fire', 'fire': 'fire', '赤': 'fire',
+                '自然': 'nature', 'nature': 'nature', '緑': 'nature',
+                '多色': 'multi', 'multi': 'multi', '虹': 'multi',
+                '無色': 'colorless', 'colorless': 'colorless'
+            };
+            return map[raw] || 'colorless';
         }
 
         function parseCardType(typeStr) {
@@ -303,7 +318,7 @@
                 'クロスギア': 'crossgear', 'crossgear': 'crossgear',
                 '城': 'castle', 'castle': 'castle',
                 'g城': 'gcastle', 'gcastle': 'gcastle',
-                'd2フィールド': 'd2field', 'd2フィールド': 'd2field',
+                'd2フィールド': 'd2field',
                 'その他フィールド': 'field', 'フィールド': 'field', 'field': 'field',
                 'タマシード': 'tamaseed', 'tamaseed': 'tamaseed',
                 'キングセル': 'kingcell', 'kingcell': 'kingcell',
@@ -320,7 +335,21 @@
                 line = line.trim();
                 if (!line || line.startsWith('//') || line.startsWith('#')) continue;
                 const parts = line.split(',').map(s => s.trim());
-                if (parts.length >= 4) {
+                if (parts.length >= 5) {
+                    const count = parseInt(parts[0]) || 1;
+                    const name = parts[1] || "Unknown";
+                    const civilization = parseCivilization(parts[2]);
+                    const type = parseCardType(parts[3]);
+                    const cost = parseInt(parts[4]) || 0;
+                    const power = parseInt(parts[5]) || 0;
+                    const breaker = parseInt(parts[6]) || (['creature', 'psychic', 'gr', 'kingcell'].includes(type) ? 1 : 0);
+                    const effect = parts[7] || null;
+
+                    for (let i = 0; i < count; i++) {
+                        deck.push(new Card(name, civilization, type, cost, power, breaker, effect));
+                    }
+                } else if (parts.length >= 4) {
+                    // Backward compatibility if civilization omitted
                     const count = parseInt(parts[0]) || 1;
                     const name = parts[1] || "Unknown";
                     const type = parseCardType(parts[2]);
@@ -330,7 +359,7 @@
                     const effect = parts[6] || null;
 
                     for (let i = 0; i < count; i++) {
-                        deck.push(new Card(name, type, cost, power, breaker, effect));
+                        deck.push(new Card(name, 'colorless', type, cost, power, breaker, effect));
                     }
                 }
             }
@@ -397,9 +426,11 @@
         }
 
         function resolveSpell(player, card) {
-            if (card.effect === 'draw_2') {
+            if (card.effect === 'draw_2' || (card.effect && card.effect.includes('draw_2'))) {
                 log(`${card.name}の効果処理: カードを2枚引きます。`, 'text-blue-300');
                 drawCard(player, 2);
+            } else {
+                log(`${card.name}の効果処理: ${card.effect || '効果なし'}`, 'text-blue-300');
             }
         }
 
@@ -508,6 +539,7 @@
                     card.summoningSickness = true;
                     state.currentTurnPlayer.bz.push(card);
                     log(`'${card.name}' をバトルゾーンに出しました。`);
+                    if (card.effect) log(`[効果] ${card.effect}`, 'text-purple-300');
                 } else if (card.type === 'spell') {
                     log(`'${card.name}' を唱えました。`);
                     resolveSpell(state.currentTurnPlayer, card);
@@ -705,7 +737,7 @@
 
                 if (!isRevealed) {
                     const el = document.createElement('div');
-                    el.className = "card w-24 h-32 md:w-28 md:h-36 rounded border-2 border-white bg-gradient-to-b from-blue-700 to-blue-900 shrink-0 shadow-lg cursor-pointer hover:ring-2 hover:ring-yellow-400 relative flex flex-col items-center justify-center p-2 select-none";
+                    el.className = "card w-28 h-36 md:w-32 md:h-40 rounded border-2 border-white bg-gradient-to-b from-blue-700 to-blue-900 shrink-0 shadow-lg cursor-pointer hover:ring-2 hover:ring-yellow-400 relative flex flex-col items-center justify-center p-2 select-none";
                     
                     const idxBadge = document.createElement('div');
                     idxBadge.className = 'absolute -top-2 -left-2 bg-black text-white rounded-full w-6 h-6 flex items-center justify-center text-[10px] font-bold z-10 border border-gray-600 shadow';
@@ -853,7 +885,7 @@
             const el = document.createElement('div');
             
             if (isShield) {
-                el.className = "card w-24 h-32 md:w-28 md:h-36 rounded border-2 border-white bg-gradient-to-b from-blue-700 to-blue-900 shrink-0 shadow-lg cursor-pointer hover:ring-2 hover:ring-yellow-400 relative flex items-center justify-center";
+                el.className = "card w-28 h-36 md:w-32 md:h-40 rounded border-2 border-white bg-gradient-to-b from-blue-700 to-blue-900 shrink-0 shadow-lg cursor-pointer hover:ring-2 hover:ring-yellow-400 relative flex items-center justify-center";
                 const idxBadge = document.createElement('div');
                 idxBadge.className = 'absolute -top-2 -left-2 bg-black text-white rounded-full px-1.5 min-w-[1.25rem] h-5 flex items-center justify-center text-[10px] font-bold z-10 border border-gray-600 shadow';
                 idxBadge.innerText = indexBadgeText;
@@ -915,13 +947,13 @@
             el.appendChild(costEl);
 
             const nameEl = document.createElement('div');
-            nameEl.className = 'font-bold leading-tight mt-5 truncate w-full text-center text-xs md:text-sm';
+            nameEl.className = 'font-bold leading-tight mt-4 truncate w-full text-center text-xs md:text-sm';
             nameEl.innerText = card.name;
             nameEl.title = card.name;
             el.appendChild(nameEl);
             
             const typeEl = document.createElement('div');
-            typeEl.className = 'text-center text-gray-600 scale-90 origin-top mt-1 whitespace-nowrap';
+            typeEl.className = 'text-center text-gray-600 scale-90 origin-top mt-0.5 whitespace-nowrap text-[10px]';
             let typeLabel = '呪文';
             if (card.type === 'creature') typeLabel = card.breaker > 1 ? `W・ブレイカー` : `クリーチャー`;
             else if (card.type === 'psychic') typeLabel = '超次元';
@@ -936,9 +968,20 @@
             typeEl.innerText = typeLabel;
             el.appendChild(typeEl);
 
+            if (card.effect) {
+                const effectEl = document.createElement('div');
+                effectEl.className = 'bg-white/80 border border-gray-300 rounded p-1 text-[9px] text-gray-800 mt-1 flex-1 overflow-hidden leading-snug';
+                effectEl.innerText = card.effect;
+                el.appendChild(effectEl);
+            } else {
+                const spacer = document.createElement('div');
+                spacer.className = 'flex-1';
+                el.appendChild(spacer);
+            }
+
             if (card.type !== 'spell') {
                 const powerEl = document.createElement('div');
-                powerEl.className = 'absolute bottom-1 right-2 font-extrabold text-red-600 text-xs md:text-sm';
+                powerEl.className = 'absolute bottom-1 right-2 font-extrabold text-red-600 text-xs';
                 powerEl.innerText = card.power;
                 el.appendChild(powerEl);
             }
@@ -1073,12 +1116,128 @@
             render();
         }
 
-        window.onload = () => {
+        function createCardEl(card, indexBadgeText, onClick, isShield = false, customClasses = "") {
+            const el = document.createElement('div');
+            
+            if (isShield) {
+                el.className = "card w-28 h-36 md:w-32 md:h-40 rounded border-2 border-white bg-gradient-to-b from-blue-700 to-blue-900 shrink-0 shadow-lg cursor-pointer hover:ring-2 hover:ring-yellow-400 relative flex items-center justify-center";
+                const idxBadge = document.createElement('div');
+                idxBadge.className = 'absolute -top-2 -left-2 bg-black text-white rounded-full px-1.5 min-w-[1.25rem] h-5 flex items-center justify-center text-[10px] font-bold z-10 border border-gray-600 shadow';
+                idxBadge.innerText = indexBadgeText;
+                el.appendChild(idxBadge);
+                
+                const label = document.createElement('div');
+                label.className = "text-xs text-white font-bold text-center px-1 truncate w-full";
+                label.innerText = "シールド";
+                el.appendChild(label);
+
+                if(onClick) el.onclick = onClick;
+                return el;
+            }
+            
+            let civBorder = 'border-gray-400';
+            let civBg = 'bg-slate-100';
+            let civBadgeColor = 'bg-gray-500';
+            let civName = '無';
+
+            if (card.civilization === 'light') {
+                civBorder = 'border-amber-400';
+                civBg = 'bg-amber-50';
+                civBadgeColor = 'bg-amber-500 text-white';
+                civName = '光';
+            } else if (card.civilization === 'water') {
+                civBorder = 'border-blue-500';
+                civBg = 'bg-blue-50';
+                civBadgeColor = 'bg-blue-600 text-white';
+                civName = '水';
+            } else if (card.civilization === 'darkness') {
+                civBorder = 'border-purple-700';
+                civBg = 'bg-purple-950 text-white';
+                civBadgeColor = 'bg-purple-800 text-white';
+                civName = '闇';
+            } else if (card.civilization === 'fire') {
+                civBorder = 'border-red-600';
+                civBg = 'bg-red-50';
+                civBadgeColor = 'bg-red-600 text-white';
+                civName = '火';
+            } else if (card.civilization === 'nature') {
+                civBorder = 'border-emerald-600';
+                civBg = 'bg-emerald-50';
+                civBadgeColor = 'bg-emerald-600 text-white';
+                civName = '自然';
+            } else if (card.civilization === 'multi') {
+                civBorder = 'border-yellow-500';
+                civBg = 'bg-gradient-to-br from-amber-50 via-blue-50 to-red-50';
+                civBadgeColor = 'bg-gradient-to-r from-amber-500 via-blue-600 to-red-600 text-white';
+                civName = '多';
+            }
+            
+            el.className = `card w-28 h-36 md:w-32 md:h-40 border-2 rounded p-2 text-xs md:text-sm flex flex-col relative select-none transition-transform cursor-pointer hover:ring-2 hover:ring-blue-400 shrink-0 shadow-md ${civBorder} ${civBg} ${customClasses}`;
+            
+            const idxBadge = document.createElement('div');
+            idxBadge.className = 'absolute -top-2 -left-2 bg-black text-white rounded-full px-1.5 min-w-[1.25rem] h-5 flex items-center justify-center text-[10px] font-bold z-10 border border-gray-600 shadow';
+            idxBadge.innerText = indexBadgeText;
+            el.appendChild(idxBadge);
+
+            // Civilization Badge Top Right
+            const civEl = document.createElement('div');
+            civEl.className = `absolute top-0 right-10 rounded-b px-1.5 py-0.5 font-bold shadow-sm text-[9px] ${civBadgeColor}`;
+            civEl.innerText = civName;
+            el.appendChild(civEl);
+
+            const costEl = document.createElement('div');
+            costEl.className = 'absolute top-0 right-0 bg-blue-600 text-white rounded-bl px-2 py-0.5 font-bold shadow-sm text-xs';
+            costEl.innerText = card.cost;
+            el.appendChild(costEl);
+
+            const nameEl = document.createElement('div');
+            nameEl.className = 'font-bold leading-tight mt-4 truncate w-full text-center text-xs md:text-sm text-black';
+            nameEl.innerText = card.name;
+            nameEl.title = card.name;
+            el.appendChild(nameEl);
+            
+            const typeEl = document.createElement('div');
+            typeEl.className = 'text-center text-gray-600 scale-90 origin-top mt-0.5 whitespace-nowrap text-[10px]';
+            let typeLabel = '呪文';
+            if (card.type === 'creature') typeLabel = card.breaker > 1 ? `W・ブレイカー` : `クリーチャー`;
+            else if (card.type === 'psychic') typeLabel = '超次元';
+            else if (card.type === 'gr') typeLabel = '超GR';
+            else if (card.type === 'crossgear') typeLabel = 'クロスギア';
+            else if (card.type === 'castle') typeLabel = '城';
+            else if (card.type === 'gcastle') typeLabel = 'G城';
+            else if (card.type === 'd2field') typeLabel = 'D2フィールド';
+            else if (card.type === 'field') typeLabel = 'その他フィールド';
+            else if (card.type === 'tamaseed') typeLabel = 'タマシード';
+            else if (card.type === 'kingcell') typeLabel = 'キングセル';
+            typeEl.innerText = typeLabel;
+            el.appendChild(typeEl);
+
+            if (card.effect) {
+                const effectEl = document.createElement('div');
+                effectEl.className = 'bg-white/90 border border-gray-300 rounded p-1 text-[9px] text-gray-800 mt-1 flex-1 overflow-hidden leading-snug';
+                effectEl.innerText = card.effect;
+                el.appendChild(effectEl);
+            } else {
+                const spacer = document.createElement('div');
+                spacer.className = 'flex-1';
+                el.appendChild(spacer);
+            }
+
+            if (card.type !== 'spell') {
+                const powerEl = document.createElement('div');
+                powerEl.className = 'absolute bottom-1 right-2 font-extrabold text-red-600 text-xs';
+                powerEl.innerText = card.power;
+                el.appendChild(powerEl);
+            }
+
+            if(onClick) el.onclick = onClick;
+            return el;
+        }
+
+        // Initialize game on load
+        window.onload = function() {
             initGame();
             render();
-            if (window.innerWidth > 768) {
-                document.getElementById('cli-input').focus();
-            }
         };
     </script>
 </body>
